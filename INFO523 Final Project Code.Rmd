@@ -1,0 +1,242 @@
+---
+title:  'Data Mining and Analysis In Motorsports'
+subtitle: 'INFO 523 Final Project'
+author:
+- name: Student -  James Clover
+  affiliation: University of Arizona
+- name: Instructor -  Cristian Román-Palacios
+  affiliation: School of Information, University of Arizona, Tucson, AZ
+tags: [R, RStudio, Final Project]
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+------------------------------------------------------------------------
+
+# Introduction
+
+Motorsports are increasingly data driven, and Formula 1 is the perfect example. Over 2TB of data is generated from a single Formula 1 car over the course of a race weekend, coming from thousands of sensors on the cars and on the track. This data is mined by the teams and drivers to analyze and make improvements to performance and strategy, as well as by the organization to present a story line to the viewers and ensure that all teams and drivers are following the rules and guidelines.
+
+------------------------------------------------------------------------
+
+# Purpose
+
+This file will be used to provide easily reproducible code for the presentation in this same GitHub repo. It goes hand-in-hand with the Powerpoint Presentation. While almost all performance data is not released to the public, we can mine what data is available to draw conclusions about how the sport is changing.
+
+------------------------------------------------------------------------
+
+### Load Required Libraries
+
+```{r}
+#Search for required packages, install them if not available
+list.of.packages <- c("ggplot2", "ggridges", "dplyr", "ggthemes", "viridis", "plotrix")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+#Load the required libraries
+library(ggplot2)
+library(ggridges)
+library(plotrix)
+library(dplyr)
+library(ggthemes)
+library(viridis)
+
+```
+
+------------------------------------------------------------------------
+
+### Load Required Datasets
+
+```{r}
+
+#Load the required data tables
+RacesOriginal <- read.csv("F1 Database/races.csv")
+CircuitsOriginal <- read.csv("F1 Database/circuits.csv")
+ResultsOriginal <- read.csv("F1 Database/results.csv")
+DriverOriginal <- read.csv("F1 Database/drivers.csv")
+
+```
+
+------------------------------------------------------------------------
+
+### Punching the Brakes: Are F1 Cars Slowing Down?
+
+```{r}
+
+#convert characters to numeric to prevent any errors
+ResultsOriginal$fastestLapSpeed <- as.numeric(ResultsOriginal$fastestLapSpeed)
+
+#Subset to only races since 2005
+RacesOriginal1 <- subset(RacesOriginal, RacesOriginal$year > 2004)
+
+#Remove unnedeed columns
+Races <- RacesOriginal1[,c(1, 2, 4, 5)]
+Results <- ResultsOriginal[,c(2, 3, 17)]
+Circuits <- CircuitsOriginal[,c(1:5)]
+
+#Merge dataframes above into one useful dataset
+FastestLapOriginal <- merge(Races, Results, by = 'raceId')
+FastestLap <- merge(FastestLapOriginal, Circuits, by = 'circuitId')
+
+#Remove Grand Prix from Race Names
+FastestLap$name.x <- gsub(" Grand Prix", "", FastestLap$name.x)
+
+#Group results into fastest lap by circuit (median speed) since 2005
+FastestLapSummary <- FastestLap %>% 
+  group_by(name.x, year) %>% 
+  summarize(medianFastestLapSpeed = median(fastestLapSpeed, na.rm = T))
+  
+#Create a plot that shows a panel of fastest lap speed on every track during this time period, with a panel for each
+FastestLapByCircuitYear <- FastestLapSummary %>% ggplot(aes(x = factor(year), y = medianFastestLapSpeed, color = medianFastestLapSpeed)) + 
+  geom_point() + theme_fivethirtyeight() + 
+  scale_color_gradientn(name = "", colours = rev(viridis(30))) + scale_x_discrete(labels = NULL, breaks = NULL) +
+  theme(
+  strip.text.x = element_text(size = 5)) + facet_wrap(~name.x, ncol = 10) + 
+  labs(title='Fastest Lap Speed Since 2005',
+       subtitle='Speed in KPH',
+       x = "Year",
+       y = "Fastest Lap Speed") +
+  guides(color=FALSE)
+
+#View the plot
+FastestLapByCircuitYear
+
+#Convert the data into a scatterplot with a regression line and confidence intervals
+FastestLapByYear <- FastestLapSummary %>%
+  ggplot(aes(x = factor(year), y = medianFastestLapSpeed, color = medianFastestLapSpeed)) + 
+  geom_jitter(shape = 16, position = position_jitter(0.1), size = 2) + 
+  geom_smooth(method = 'loess', aes(group = 1), color = "red", fill = "black", lty = 1, size = 1) +
+  scale_color_gradientn(name = "",colours = rev(viridis(10))) + 
+  labs(title = 'Fastest Laps By Year',
+       subtitle = 'Speed in KPH',
+       x = "Year",
+       y = "Fastest Lap Speed") + 
+  guides(color = FALSE)
+
+#View the plot
+FastestLapByYear
+
+```
+
+------------------------------------------------------------------------
+
+### A Young Man's Game: Are Drivers Getting Younger?
+
+```{r}
+
+#Remove unnedeed columns
+Driver2 <- DriverOriginal[,c(1, 7, 8)]
+Results2 <- ResultsOriginal[,c(2:3, 9)]
+Races2 <- RacesOriginal[,c(1, 2, 6)]
+
+#Merge dataframes above into one useful dataset
+DriverAgeOriginal <- merge(Results2, Driver2, by = 'driverId')
+DriverAge <- merge(DriverAgeOriginal, Races2, by = 'raceId')
+
+#Convert Driver Age into a readable format
+DriverAge$dob <- as.Date(DriverAge$dob,"%Y-%m-%d")
+
+#Create a new column that substracts date of birth from race date to find year, rounds down to closest integer with "floor"
+#Note that difftime has a max unit of weeks, so 52.25 is used to convert to years, accounting for leap years
+DriverAge$agerace <- floor(as.numeric(difftime(DriverAge$date, DriverAge$dob, units = "weeks"))/52.25)
+
+#Create a summary of average driver age by year
+DriverAgeMean <- DriverAge %>% 
+  group_by(year) %>% 
+  summarize(averageage = mean(agerace, na.rm = T))
+
+#Create a trend of average driver age over time
+AgeOverTime <- DriverAgeMean %>%
+  ggplot(aes(x = factor(year), y = averageage, color = averageage)) + 
+  geom_jitter(shape = 16, position = position_jitter(0.1), size = 2) +
+  geom_smooth(method = 'loess', aes(group = 1), color = 'red', fill = 'black', lty = 1, size = 1) +
+  scale_y_continuous(breaks = seq(20, 44, 2)) +
+  scale_x_discrete(breaks = seq(1950, 2022, 4)) +
+  scale_color_gradientn(name = "",colours = rev(viridis(10))) + 
+  labs(title = "Average Driver Age",
+       x = "Year",
+       y = "Age") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  guides(color = FALSE)
+
+#View the plot
+AgeOverTime
+
+```
+
+------------------------------------------------------------------------
+
+### What's Age Got to Do With It: Do Older Drivers Lose Their Skills?
+
+```{r}
+
+#Remove sparse data, as drivers over 50 have been quite rare
+DriverAge2 <- subset(DriverAge, DriverAge$agerace < 60)
+
+#Create a new dataframe that has only the finishing position by age
+FinishPositionbyAge <- DriverAge2 %>%
+  group_by(agerace) %>%
+  summarise_at(vars(positionOrder), list(name = mean)) %>% rename(position = name)
+
+#Create a column that groups ages
+FinishPositionbyAge$agegroup <- cut(FinishPositionbyAge$agerace, c(15,20,25,30,35,40,45,60))
+levels(FinishPositionbyAge$agegroup) = c("Under 20", "20-25", "25-30", "30-35", "35-40", "40-45", "Over 45")
+
+#Create a ridgeline plot that shows the finishing position distribution by age group
+FinishingPositionAge <- FinishPositionbyAge %>% ggplot(aes(x = position, y = agegroup)) +
+  geom_density_ridges(aes(fill = agegroup), alpha = 0.4, size = 0.6, rel_min_height = 0.01) + 
+  scale_x_continuous(breaks = seq(8, 16, by = 2), limits = c(8,16)) +
+  scale_y_discrete(expand = expand_scale(add = c(0, 1.8)), limits = rev) +
+  labs(title = "Average Finishing Position by Driver Age",
+       subtitle = "Lower is Better",
+       x = "Finishing Position",
+       y= "Age Group") + 
+  theme(legend.position="none")
+
+#View the Plot 
+FinishingPositionAge
+
+```
+
+------------------------------------------------------------------------
+
+### Our Place In the Sun: Which Nations Dominate Formula 1?
+
+```{r}
+
+#Create a new dataframe that has only the average position by age
+FinishPositionbyCountry <- DriverAge %>%
+  group_by(nationality) %>%
+  summarise_at(vars(positionOrder), list(name = mean)) %>% rename(position = name)
+
+#Create Continents table to simplify coding them later
+Continent <- c(1, 2, 3, 4, 5, 6, 7, 8)
+ContinentName <- c("Africa", "Asia", "Europe", "North America", "Oceania", "South America", "N. America + Europe", "S. America + Europe")
+Continents <- data.frame(ContinentName, Continent)
+
+#Add a continent column for each nationality
+FinishPositionbyCountry$Continent <- c(4, 7, 6, 8, 5, 3, 3, 6, 3, 4, 6, 2, 6, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 3, 3, 2, 3, 2, 4, 3, 5, 3, 3, 1, 3, 1, 3, 3, 3, 2, 6, 6)
+
+#Merge dataframes above into one useful dataset
+FinishPositionCountryContinent <- merge(FinishPositionbyCountry, Continents, by = 'Continent')
+
+
+
+#Create a bar chart, sorted by average finishing position, colored by home continent
+CountryPositionPareto <- FinishPositionCountryContinent %>% 
+  ggplot(aes(x = reorder(nationality, position), y = position, fill = ContinentName)) +
+  geom_bar(stat = "identity") +
+  labs(title = 'Average Finishing Position by Nationality',
+       subtitle = "Lower is Better",
+       x = "Nationality",
+       y = "Position",) + 
+  scale_fill_discrete(name = "Home Continent") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 8), aspect.ratio = 1/3)
+
+#View the Plot
+CountryPositionPareto
+
+```
